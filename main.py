@@ -18,14 +18,14 @@ import re
 import time
 import subprocess
 import platform
-from pathlib import Path
 from textwrap import dedent
 from typing import List, Dict, Any, Optional, Tuple, Union
 
 # Third-party imports
-from mistralai import Mistral
+from cerebras.cloud.sdk import Cerebras
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Rich console imports
 from rich.console import Console
@@ -104,11 +104,14 @@ os_info: Dict[str, Any] = {
     }
 }
 
-# Initialize Mistral client
+# Initialize Cerebras client
 load_dotenv()
-client = Mistral(
-    api_key=os.getenv("MISTRAL_API_KEY")
+client = Cerebras(
+    api_key=os.getenv("CEREBRAS_API_KEY")
 )
+
+# Load .env from the same directory as main.py
+load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
 # -----------------------------------------------------------------------------
 # 4. TYPE DEFINITIONS & PYDANTIC MODELS
@@ -250,7 +253,7 @@ class MistralAssistant:
         self.base_dir: Path = Path.cwd()
         
         # Initialize Mistral client
-        self.client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+        #self.client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
         
         # Initialize command registry
         self.command_registry = CommandRegistry(self)
@@ -285,51 +288,29 @@ class MistralAssistant:
         }
     
     def process_streaming_response(self) -> Tuple[str, List[Dict[str, Any]]]:
-        """Process streaming response from the Mistral API."""
+        """Process streaming response from the Cerebras API."""
         current_model = self.model_context['current_model']
         model_name = "Magistral" if self.model_context['is_reasoner'] else "Mistral Medium"
         
         with console.status(f"[bold yellow]{model_name} is thinking...[/bold yellow]", spinner="dots"):
-            response_stream = self.client.chat.stream(
-                model=current_model,
+            stream = client.chat.completions.create(
                 messages=self.conversation_history,
-                tools=tools,
-                tool_choice="auto"
+                model=current_model,
+                stream=True,
+                max_completion_tokens=5000,
+                temperature=0.7,
+                top_p=1
             )
         
         full_response_content = ""
         accumulated_tool_calls = []
         
-        for chunk in response_stream:
-            # Handle content chunks
-            if chunk.data.choices[0].delta.content:
-                content_part = chunk.data.choices[0].delta.content
-                console.print(content_part, end="", style="bright_magenta")
-                full_response_content += content_part
-            
-            # Handle tool call chunks
-            if chunk.data.choices[0].delta.tool_calls:
-                for tool_call_chunk in chunk.data.choices[0].delta.tool_calls:
-                    idx = tool_call_chunk.index
-                    
-                    # Ensure we have enough accumulated tool calls
-                    while len(accumulated_tool_calls) <= idx:
-                        accumulated_tool_calls.append({
-                            "id": "",
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""}
-                        })
-                    
-                    current_tool_dict = accumulated_tool_calls[idx]
-                    
-                    # Update tool call data
-                    if tool_call_chunk.id:
-                        current_tool_dict["id"] = tool_call_chunk.id
-                    if tool_call_chunk.function:
-                        if tool_call_chunk.function.name:
-                            current_tool_dict["function"]["name"] = tool_call_chunk.function.name
-                        if tool_call_chunk.function.arguments:
-                            current_tool_dict["function"]["arguments"] += tool_call_chunk.function.arguments
+        for chunk in stream:
+            content = chunk.choices[0].delta.content or ""
+            # Strip <think> and </think> tags from the content
+            content = content.replace("<think>", "").replace("</think>", "")
+            console.print(content, end="", style="bright_magenta")
+            full_response_content += content
         
         return full_response_content, accumulated_tool_calls
     
@@ -1655,11 +1636,8 @@ def add_directory_to_conversation(directory_path: str) -> None:
             for file in files:
                 if total_processed >= MAX_FILES_IN_ADD_DIR: 
                     break
-                if (file.startswith('.') or 
-                    file in EXCLUDED_FILES or 
-                    os.path.splitext(file)[1].lower() in EXCLUDED_EXTENSIONS): 
-                    skipped.append(os.path.join(root, file))
-                    continue
+                #if file.startswith('.') or 
+                #    file in EXCLUDED_FILES or 
                     
                 full_path = os.path.join(root, file)
                 try:
@@ -2045,11 +2023,15 @@ def try_handle_r1_command(user_input: str) -> bool:
         
         try:
             with console.status("[bold yellow]Magistral (R1) is thinking...[/bold yellow]", spinner="dots"):
-                response_stream = client.chat.stream(
+                response_stream = client.chat.completions.create(
                     model=REASONER_MODEL,
                     messages=temp_conversation,
                     tools=tools,
-                    tool_choice="auto"
+                    tool_choice="auto",
+                    stream=True,
+                    max_completion_tokens=5000,
+                    temperature=0.7,
+                    top_p=1
                 )
             
             # Process and display the response
@@ -2059,14 +2041,16 @@ def try_handle_r1_command(user_input: str) -> bool:
             console.print("[bold bright_magenta]🧠 Magistral:[/bold bright_magenta] ", end="")
             for chunk in response_stream:
                 # Handle content chunks
-                if chunk.data.choices[0].delta.content:
-                    content = chunk.data.choices[0].delta.content
+                if chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    # Strip <think> and </think> tags from the content
+                    content = content.replace("<think>", "").replace("</think>", "")
                     console.print(content, end="", style="bright_magenta")
                     full_response_content += content
                 
                 # Handle tool call chunks (though R1 calls usually don't use tools)
-                if chunk.data.choices[0].delta.tool_calls:
-                    for tool_call_chunk in chunk.data.choices[0].delta.tool_calls:
+                if chunk.choices[0].delta.tool_calls:
+                    for tool_call_chunk in chunk.choices[0].delta.tool_calls:
                         idx = tool_call_chunk.index
                         while len(accumulated_tool_calls) <= idx:
                             accumulated_tool_calls.append({
@@ -2844,11 +2828,15 @@ def main_loop() -> None:
             
             # Make API call
             with console.status(f"[bold yellow]{model_name} is thinking...[/bold yellow]", spinner="dots"):
-                response_stream = client.chat.stream(
-                    model=current_model,  # <--- FIX
+                response_stream = client.chat.completions.create(
+                    model=current_model,
                     messages=conversation_history, # type: ignore
                     tools=tools, # type: ignore
-                    tool_choice="auto"
+                    tool_choice="auto",
+                    stream=True,
+                    max_completion_tokens=5000,
+                    temperature=0.7,
+                    top_p=1
                 )
             
             # Process streaming response
@@ -2857,13 +2845,15 @@ def main_loop() -> None:
 
             console.print(f"[bold bright_magenta]🤖 {model_name}:[/bold bright_magenta] ", end="")
             for chunk in response_stream:
-                if chunk.data.choices[0].delta.content:
-                    content_part = chunk.data.choices[0].delta.content
+                if chunk.choices[0].delta.content:
+                    content_part = chunk.choices[0].delta.content
+                    # Strip <think> and </think> tags from the content
+                    content_part = content_part.replace("<think>", "").replace("</think>", "")
                     console.print(content_part, end="", style="bright_magenta")
                     full_response_content += content_part
                 
-                if chunk.data.choices[0].delta.tool_calls:
-                    for tool_call_chunk in chunk.data.choices[0].delta.tool_calls:
+                if chunk.choices[0].delta.tool_calls:
+                    for tool_call_chunk in chunk.choices[0].delta.tool_calls:
                         idx = tool_call_chunk.index
                         while len(accumulated_tool_calls) <= idx:
                             accumulated_tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
@@ -2919,11 +2909,15 @@ def main_loop() -> None:
                     current_round += 1
                     
                     with console.status(f"[bold yellow]{model_name} is processing results...[/bold yellow]", spinner="dots"):
-                        continue_response_stream = client.chat.stream(
+                        continue_response_stream = client.chat.completions.create(
                             model=current_model, 
                             messages=conversation_history, # type: ignore
                             tools=tools, # type: ignore
-                            tool_choice="auto"
+                            tool_choice="auto",
+                            stream=True,
+                            max_completion_tokens=5000,
+                            temperature=0.7,
+                            top_p=1
                         )
                     
                     # Process the continuation response
@@ -2932,13 +2926,15 @@ def main_loop() -> None:
                     
                     console.print(f"[bold bright_magenta]🤖 {model_name}:[/bold bright_magenta] ", end="")
                     for chunk in continue_response_stream:
-                        if chunk.data.choices[0].delta.content:
-                            content_part = chunk.data.choices[0].delta.content
+                        if chunk.choices[0].delta.content:
+                            content_part = chunk.choices[0].delta.content
+                            # Strip <think> and </think> tags from the content
+                            content_part = content_part.replace("<think>", "").replace("</think>", "")
                             console.print(content_part, end="", style="bright_magenta")
                             continuation_content += content_part
                         
-                        if chunk.data.choices[0].delta.tool_calls:
-                            for tool_call_chunk in chunk.data.choices[0].delta.tool_calls:
+                        if chunk.choices[0].delta.tool_calls:
+                            for tool_call_chunk in chunk.choices[0].delta.tool_calls:
                                 idx = tool_call_chunk.index
                                 while len(continuation_tool_calls) <= idx:
                                     continuation_tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
