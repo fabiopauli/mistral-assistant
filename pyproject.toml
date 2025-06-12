@@ -1,0 +1,7 @@
+[project]
+name = "mistral"
+version = "0.1.0"
+description = "Mistral Engineer Assistant"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []

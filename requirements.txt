@@ -1,0 +1,7 @@
+mistralai
+pydantic
+python-dotenv
+rich
+prompt-toolkit
+thefuzz
+python-levenshtein
