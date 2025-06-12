@@ -12,14 +12,14 @@
   "conversation": {
     "max_history_messages": 50,
     "max_context_files": 5,
-    "estimated_max_tokens": 66000,
+    "estimated_max_tokens": 33000,
     "tokens_per_message_estimate": 200,
     "tokens_per_file_kb": 300,
     "context_warning_threshold": 0.8,
     "aggressive_truncation_threshold": 0.9
   },
   "models": {
-    "default_model": "qwen-3-32b",
+    "default_model": "llama-4-scout-17b-16e-instruct",
     "reasoner_model": "qwen-3-32b"
   },
   "security": {

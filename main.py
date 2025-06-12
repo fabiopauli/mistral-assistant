@@ -1636,8 +1636,10 @@ def add_directory_to_conversation(directory_path: str) -> None:
             for file in files:
                 if total_processed >= MAX_FILES_IN_ADD_DIR: 
                     break
-                #if file.startswith('.') or 
-                #    file in EXCLUDED_FILES or 
+                if (file.startswith('.') or 
+                    file in EXCLUDED_FILES or 
+                    os.path.splitext(file)[1] in EXCLUDED_EXTENSIONS):
+                    continue
                     
                 full_path = os.path.join(root, file)
                 try:
